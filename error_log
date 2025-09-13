@@ -1,0 +1,25 @@
+[13-Sep-2025 11:59:36 Asia/Jerusalem] Database query error: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'c.company_name' in 'SELECT'
+[13-Sep-2025 11:59:36 Asia/Jerusalem] Database query error: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'closed_at' in 'WHERE'
+[13-Sep-2025 11:59:36 Asia/Jerusalem] Dashboard data error: שגיאה בביצוע השאילתה
+[13-Sep-2025 12:00:59 Asia/Jerusalem] Database query error: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'c.company_name' in 'SELECT'
+[13-Sep-2025 12:00:59 Asia/Jerusalem] Database query error: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'closed_at' in 'WHERE'
+[13-Sep-2025 12:00:59 Asia/Jerusalem] Dashboard data error: שגיאה בביצוע השאילתה
+[13-Sep-2025 12:01:07 Asia/Jerusalem] Database query error: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'c.company_name' in 'SELECT'
+[13-Sep-2025 12:01:07 Asia/Jerusalem] Database query error: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'closed_at' in 'WHERE'
+[13-Sep-2025 12:01:07 Asia/Jerusalem] Dashboard data error: שגיאה בביצוע השאילתה
+[13-Sep-2025 13:56:07 Asia/Jerusalem] PHP Warning:  Cannot modify header information - headers already sent by (output started at /home/atarimst/worksafety.io/includes/header.php:96) in /home/atarimst/worksafety.io/dashboard.php on line 18
+[13-Sep-2025 13:56:13 Asia/Jerusalem] Database query error: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'c.company_name' in 'SELECT'
+[13-Sep-2025 13:56:13 Asia/Jerusalem] Database query error: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'closed_at' in 'WHERE'
+[13-Sep-2025 13:56:13 Asia/Jerusalem] Dashboard data error: שגיאה בביצוע השאילתה
+[13-Sep-2025 14:02:11 Asia/Jerusalem] Database query error: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'c.company_name' in 'SELECT'
+[13-Sep-2025 14:02:11 Asia/Jerusalem] Database query error: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'closed_at' in 'WHERE'
+[13-Sep-2025 14:02:11 Asia/Jerusalem] Dashboard data error: שגיאה בביצוע השאילתה
+[13-Sep-2025 14:08:01 Asia/Jerusalem] Database query error: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'c.company_name' in 'SELECT'
+[13-Sep-2025 14:08:01 Asia/Jerusalem] Database query error: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'closed_at' in 'WHERE'
+[13-Sep-2025 14:08:01 Asia/Jerusalem] Dashboard data error: שגיאה בביצוע השאילתה
+[13-Sep-2025 14:08:05 Asia/Jerusalem] Database query error: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'c.company_name' in 'SELECT'
+[13-Sep-2025 14:08:05 Asia/Jerusalem] Database query error: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'closed_at' in 'WHERE'
+[13-Sep-2025 14:08:05 Asia/Jerusalem] Dashboard data error: שגיאה בביצוע השאילתה
+[13-Sep-2025 22:56:25 Asia/Jerusalem] Database query error: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'c.company_name' in 'SELECT'
+[13-Sep-2025 22:56:25 Asia/Jerusalem] Database query error: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'closed_at' in 'WHERE'
+[13-Sep-2025 22:56:25 Asia/Jerusalem] Dashboard data error: שגיאה בביצוע השאילתה

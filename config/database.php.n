@@ -1,0 +1,207 @@
+<?php
+/**
+ * WorkSafety.io - מערכת ניהול בטיחות תעשייתית
+ * קובץ הגדרות מסד נתונים מתוקן
+ * 
+ * @author WorkSafety.io Development Team
+ * @version 1.1
+ * @date 2025
+ */
+
+// הגדרת אזור זמן ישראל בתחילת הקובץ
+date_default_timezone_set('Asia/Jerusalem');
+
+// הגדרות מסד נתונים
+define('DB_HOST', 'localhost');
+define('DB_NAME', 'atarimst_worksafetydb');
+define('DB_USER', 'atarimst_rootadmin');
+define('DB_PASS', 'Shani@2025');
+define('DB_CHARSET', 'utf8mb4');
+
+// הגדרות מערכת
+define('SITE_URL', 'https://worksafety.io');
+define('SITE_NAME', 'WorkSafety.io');
+define('SITE_DESCRIPTION', 'מערכת ניהול בטיחות תעשייתית מתקדמת');
+
+// הגדרות אבטחה
+define('SESSION_LIFETIME', 28800); // 8 שעות
+define('PASSWORD_MIN_LENGTH', 8);
+define('MAX_LOGIN_ATTEMPTS', 5);
+
+/**
+ * יצירת חיבור למסד הנתונים עם PDO
+ */
+class Database {
+    private static $instance = null;
+    private $connection;
+    
+    private function __construct() {
+        try {
+            $dsn = "mysql:host=" . DB_HOST . ";dbname=" . DB_NAME . ";charset=" . DB_CHARSET;
+            
+            $options = [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_EMULATE_PREPARES => false,
+                PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci"
+            ];
+            
+            $this->connection = new PDO($dsn, DB_USER, DB_PASS, $options);
+            
+            // הגדרת אזור זמן במסד הנתונים - עדכון מתקדם יותר
+            try {
+                // קודם בודק אם אזור הזמן קיים במסד הנתונים
+                $stmt = $this->connection->prepare("SELECT CONVERT_TZ(NOW(), @@session.time_zone, '+03:00') as israel_time");
+                $stmt->execute();
+                $result = $stmt->fetch();
+                
+                if ($result && $result['israel_time']) {
+                    // אזור זמן ישראל עם התחשבות בשעון קיץ/חורף
+                    $this->connection->exec("SET time_zone = '+03:00'"); // קיץ
+                    // או אפשר להשתמש ב: SET time_zone = 'Asia/Jerusalem' אם השרת תומך
+                } else {
+                    // ברירת מחדל - UTC+2 לחורף
+                    $this->connection->exec("SET time_zone = '+02:00'");
+                }
+                
+            } catch (PDOException $timezone_error) {
+                // אם יש בעיה עם הגדרת אזור זמן, נמשיך בלי זה
+                error_log("Warning: Could not set MySQL timezone: " . $timezone_error->getMessage());
+            }
+            
+        } catch (PDOException $e) {
+            error_log("Database connection error: " . $e->getMessage());
+            die("שגיאה בחיבור למסד הנתונים. אנא נסה שוב מאוחר יותר.");
+        }
+    }
+    
+    /**
+     * קבלת instance יחיד של החיבור
+     */
+    public static function getInstance() {
+        if (self::$instance === null) {
+            self::$instance = new self();
+        }
+        return self::$instance;
+    }
+    
+    /**
+     * קבלת החיבור למסד הנתונים
+     */
+    public function getConnection() {
+        return $this->connection;
+    }
+    
+    /**
+     * בדיקת חיבור פשוטה
+     */
+    public function testConnection() {
+        try {
+            $stmt = $this->connection->query("SELECT VERSION() as version, DATABASE() as database_name, USER() as db_user");
+            return $stmt->fetch();
+        } catch (PDOException $e) {
+            throw new Exception("שגיאה בבדיקת החיבור: " . $e->getMessage());
+        }
+    }
+    
+    /**
+     * ביצוע שאילתה פשוטה
+     */
+    public function query($sql, $params = []) {
+        try {
+            $stmt = $this->connection->prepare($sql);
+            $stmt->execute($params);
+            return $stmt;
+        } catch (PDOException $e) {
+            error_log("Database query error: " . $e->getMessage());
+            throw new Exception("שגיאה בביצוע השאילתה");
+        }
+    }
+    
+    /**
+     * קבלת רשומה אחת
+     */
+    public function fetch($sql, $params = []) {
+        $stmt = $this->query($sql, $params);
+        return $stmt->fetch();
+    }
+    
+    /**
+     * קבלת כל הרשומות
+     */
+    public function fetchAll($sql, $params = []) {
+        $stmt = $this->query($sql, $params);
+        return $stmt->fetchAll();
+    }
+    
+    /**
+     * הכנסת רשומה חדשה
+     */
+    public function insert($table, $data) {
+        $columns = implode(',', array_keys($data));
+        $placeholders = ':' . implode(', :', array_keys($data));
+        
+        $sql = "INSERT INTO {$table} ({$columns}) VALUES ({$placeholders})";
+        $this->query($sql, $data);
+        
+        return $this->connection->lastInsertId();
+    }
+    
+    /**
+     * עדכון רשומה
+     */
+    public function update($table, $data, $where, $whereParams = []) {
+        $set = [];
+        foreach ($data as $key => $value) {
+            $set[] = "{$key} = :{$key}";
+        }
+        $setString = implode(', ', $set);
+        
+        $sql = "UPDATE {$table} SET {$setString} WHERE {$where}";
+        $params = array_merge($data, $whereParams);
+        
+        return $this->query($sql, $params);
+    }
+    
+    /**
+     * מחיקת רשומה
+     */
+    public function delete($table, $where, $params = []) {
+        $sql = "DELETE FROM {$table} WHERE {$where}";
+        return $this->query($sql, $params);
+    }
+}
+
+// יצירת instance גלובלי
+$db = Database::getInstance();
+
+// פונקציות עזר גלובליות
+function getDB() {
+    return Database::getInstance();
+}
+
+function getCurrentDateTime() {
+    return date('Y-m-d H:i:s');
+}
+
+function getCurrentDate() {
+    return date('Y-m-d');
+}
+
+
+
+function formatHebrewDateTime($datetime) {
+    $timestamp = strtotime($datetime);
+    return date('d/m/Y H:i', $timestamp);
+}
+
+/**
+ * פונקציית עזר לבדיקת זמן ישראל
+ */
+function getIsraelTime() {
+    $israel_tz = new DateTimeZone('Asia/Jerusalem');
+    $israel_time = new DateTime('now', $israel_tz);
+    return $israel_time;
+}
+
+

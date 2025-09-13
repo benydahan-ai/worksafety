@@ -1,0 +1,612 @@
+<?php
+/**
+ * WorkSafety.io - מודול ניהול חברות
+ * דף ראשי לניהול חברות עם עיצוב מקצועי ופונקציונליות מתקדמת
+ */
+
+// הגדרות דף
+$pageTitle = 'ניהול חברות';
+$pageDescription = 'ניהול חברות לקוחות, הגבלות שימוש ופרמיטרי מנוי';
+$additionalCSS = ['/modules/companies/assets/companies.css'];
+$additionalJS = ['/modules/companies/assets/companies.js'];
+
+// כלילת קבצים נדרשים
+require_once '../../includes/header.php';
+
+// וידוא התחברות והרשאות
+if (!isset($_SESSION['user_id'])) {
+    header('Location: /login.php');
+    exit;
+}
+
+// בדיקת הרשאות - רק מנהל ראשי יכול לנהל חברות
+$userRole = $currentUser['role'] ?? 'worker';
+if (!in_array($userRole, ['super_admin', 'company_admin'])) {
+    $_SESSION['flash_message']['danger'] = 'אין לך הרשאה לגשת לעמוד זה';
+    header('Location: /dashboard.php');
+    exit;
+}
+
+try {
+    $db = getDB();
+    
+    // פרמטרי חיפוש וסינון
+    $search = $_GET['search'] ?? '';
+    $status = $_GET['status'] ?? '';
+    $company_type = $_GET['company_type'] ?? '';
+    $subscription_plan = $_GET['subscription_plan'] ?? '';
+    $page = intval($_GET['page'] ?? 1);
+    $limit = 20; // מספר חברות בעמוד
+    $offset = ($page - 1) * $limit;
+    
+    // בניית שאילתה בהתאם לתפקיד
+    $whereConditions = [];
+    $params = [];
+    
+    if ($userRole === 'company_admin') {
+        // מנהל חברה רואה רק את החברה שלו ואת הקבלנים שלה
+        $whereConditions[] = "(c.id = ? OR c.parent_company_id = ?)";
+        $params[] = $currentUser['company_id'];
+        $params[] = $currentUser['company_id'];
+    }
+    
+    // חיפוש טקסט
+    if (!empty($search)) {
+        $whereConditions[] = "(c.name LIKE ? OR c.email LIKE ? OR c.contact_person LIKE ? OR c.registration_number LIKE ?)";
+        $searchTerm = "%{$search}%";
+        $params = array_merge($params, [$searchTerm, $searchTerm, $searchTerm, $searchTerm]);
+    }
+    
+    // סינון לפי סטטוס
+    if (!empty($status)) {
+        $whereConditions[] = "c.status = ?";
+        $params[] = $status;
+    }
+    
+    // סינון לפי סוג חברה
+    if (!empty($company_type)) {
+        $whereConditions[] = "c.company_type = ?";
+        $params[] = $company_type;
+    }
+    
+    // סינון לפי תוכנית מנוי
+    if (!empty($subscription_plan)) {
+        $whereConditions[] = "c.subscription_plan = ?";
+        $params[] = $subscription_plan;
+    }
+    
+    $whereClause = !empty($whereConditions) ? 'WHERE ' . implode(' AND ', $whereConditions) : '';
+    
+    // קבלת מספר החברות הכולל (לקביעת מספר עמודים)
+    $totalQuery = "SELECT COUNT(*) as total FROM companies c {$whereClause}";
+    $totalResult = $db->fetchOne($totalQuery, $params);
+    $totalCompanies = $totalResult['total'] ?? 0;
+    $totalPages = ceil($totalCompanies / $limit);
+    
+    // קבלת החברות עם פגינציה
+    $companies = $db->fetchAll("
+        SELECT 
+            c.*,
+            (SELECT COUNT(*) FROM users WHERE company_id = c.id AND status = 'active') as active_users,
+            (SELECT COUNT(*) FROM worksites WHERE company_id = c.id AND status = 'active') as active_sites,
+            CASE 
+                WHEN c.expires_at IS NULL THEN 'ללא הגבלה'
+                WHEN c.expires_at < NOW() THEN 'פג תוקף'
+                WHEN c.expires_at < DATE_ADD(NOW(), INTERVAL 30 DAY) THEN 'יפוג בקרוב'
+                ELSE 'פעיל'
+            END as subscription_status,
+            DATEDIFF(c.expires_at, NOW()) as days_to_expiry
+        FROM companies c 
+        {$whereClause}
+        ORDER BY 
+            CASE c.company_type 
+                WHEN 'main' THEN 1 
+                WHEN 'client' THEN 2 
+                ELSE 3 
+            END,
+            c.name ASC
+        LIMIT {$limit} OFFSET {$offset}
+    ", $params);
+    
+    // סטטיסטיקות מהירות
+    $stats = $db->fetchOne("
+        SELECT 
+            COUNT(*) as total,
+            SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active,
+            SUM(CASE WHEN status = 'inactive' THEN 1 ELSE 0 END) as inactive,
+            SUM(CASE WHEN company_type = 'main' THEN 1 ELSE 0 END) as main_companies,
+            SUM(CASE WHEN company_type = 'client' THEN 1 ELSE 0 END) as client_companies,
+            SUM(CASE WHEN expires_at < NOW() THEN 1 ELSE 0 END) as expired
+        FROM companies c " . ($userRole === 'company_admin' ? 
+            "WHERE (c.id = {$currentUser['company_id']} OR c.parent_company_id = {$currentUser['company_id']})" : '')
+    );
+    
+} catch (Exception $e) {
+    error_log("Companies page error: " . $e->getMessage());
+    $_SESSION['flash_message']['danger'] = 'שגיאה בטעינת נתוני החברות';
+    $companies = [];
+    $stats = ['total' => 0, 'active' => 0, 'inactive' => 0, 'main_companies' => 0, 'client_companies' => 0, 'expired' => 0];
+    $totalPages = 1;
+}
+?>
+
+<div class="page-wrapper">
+    <!-- Page Header -->
+    <header class="page-header">
+        <div class="header-content">
+            <div class="header-text">
+                <h1>
+                    <i class="fas fa-building"></i>
+                    ניהול חברות
+                </h1>
+                <p>
+                    ניהול מקיף של חברות לקוחות, הגבלות שימוש ותוכניות מנוי
+                    <span class="text-muted">
+                        • סה"כ <?php echo number_format($stats['total']); ?> חברות
+                        • <?php echo number_format($stats['active']); ?> פעילות
+                    </span>
+                </p>
+            </div>
+            <div class="header-actions">
+                <?php if ($userRole === 'super_admin'): ?>
+                <a href="add.php" class="btn btn-primary">
+                    <i class="fas fa-plus"></i>
+                    הוסף חברה חדשה
+                </a>
+                <?php endif; ?>
+                <button class="btn btn-outline btn-sm" onclick="exportCompanies()">
+                    <i class="fas fa-download"></i>
+                    ייצא נתונים
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Page Content -->
+    <div class="page-content">
+        
+        <!-- Statistics Cards -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-icon" style="color: #10b981;">
+                    <i class="fas fa-building"></i>
+                </div>
+                <div class="stat-content">
+                    <div class="stat-value"><?php echo number_format($stats['total']); ?></div>
+                    <div class="stat-label">סה"כ חברות</div>
+                </div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-icon" style="color: #3b82f6;">
+                    <i class="fas fa-check-circle"></i>
+                </div>
+                <div class="stat-content">
+                    <div class="stat-value"><?php echo number_format($stats['active']); ?></div>
+                    <div class="stat-label">חברות פעילות</div>
+                </div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-icon" style="color: #8b5cf6;">
+                    <i class="fas fa-crown"></i>
+                </div>
+                <div class="stat-content">
+                    <div class="stat-value"><?php echo number_format($stats['main_companies']); ?></div>
+                    <div class="stat-label">חברות ראשיות</div>
+                </div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-icon" style="color: #f59e0b;">
+                    <i class="fas fa-users"></i>
+                </div>
+                <div class="stat-content">
+                    <div class="stat-value"><?php echo number_format($stats['client_companies']); ?></div>
+                    <div class="stat-label">חברות לקוחות</div>
+                </div>
+            </div>
+            
+            <?php if ($stats['expired'] > 0): ?>
+            <div class="stat-card alert">
+                <div class="stat-icon" style="color: #ef4444;">
+                    <i class="fas fa-exclamation-triangle"></i>
+                </div>
+                <div class="stat-content">
+                    <div class="stat-value"><?php echo number_format($stats['expired']); ?></div>
+                    <div class="stat-label">מנויים שפגו</div>
+                </div>
+            </div>
+            <?php endif; ?>
+        </div>
+
+        <!-- Search and Filters -->
+        <div class="card">
+            <div class="card-header">
+                <h3><i class="fas fa-search"></i> חיפוש וסינון</h3>
+            </div>
+            <div class="card-body">
+                <form method="GET" class="search-form">
+                    <div class="search-grid">
+                        <div class="search-field">
+                            <label>חיפוש כללי</label>
+                            <div class="input-group">
+                                <input type="text" name="search" value="<?php echo htmlspecialchars($search); ?>" 
+                                       placeholder="שם חברה, אימייל, איש קשר, מס' רישום..." class="form-control">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="fas fa-search"></i>
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="search-field">
+                            <label>סטטוס</label>
+                            <select name="status" class="form-control">
+                                <option value="">כל הסטטוסים</option>
+                                <option value="active" <?php echo $status === 'active' ? 'selected' : ''; ?>>פעיל</option>
+                                <option value="inactive" <?php echo $status === 'inactive' ? 'selected' : ''; ?>>לא פעיל</option>
+                                <option value="suspended" <?php echo $status === 'suspended' ? 'selected' : ''; ?>>מושעה</option>
+                            </select>
+                        </div>
+                        
+                        <div class="search-field">
+                            <label>סוג חברה</label>
+                            <select name="company_type" class="form-control">
+                                <option value="">כל הסוגים</option>
+                                <option value="main" <?php echo $company_type === 'main' ? 'selected' : ''; ?>>חברה ראשית</option>
+                                <option value="client" <?php echo $company_type === 'client' ? 'selected' : ''; ?>>חברת לקוח</option>
+                            </select>
+                        </div>
+                        
+                        <div class="search-field">
+                            <label>תוכנית מנוי</label>
+                            <select name="subscription_plan" class="form-control">
+                                <option value="">כל התוכניות</option>
+                                <option value="basic" <?php echo $subscription_plan === 'basic' ? 'selected' : ''; ?>>בסיסי</option>
+                                <option value="standard" <?php echo $subscription_plan === 'standard' ? 'selected' : ''; ?>>סטנדרטי</option>
+                                <option value="premium" <?php echo $subscription_plan === 'premium' ? 'selected' : ''; ?>>פרימיום</option>
+                                <option value="enterprise" <?php echo $subscription_plan === 'enterprise' ? 'selected' : ''; ?>>ארגוני</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="search-actions">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-search"></i>
+                            חפש
+                        </button>
+                        <a href="index.php" class="btn btn-outline">
+                            <i class="fas fa-times"></i>
+                            נקה סינונים
+                        </a>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Companies List -->
+        <div class="card">
+            <div class="card-header">
+                <h3>
+                    <i class="fas fa-list"></i>
+                    רשימת חברות
+                    <span class="text-muted">(<?php echo number_format($totalCompanies); ?> תוצאות)</span>
+                </h3>
+            </div>
+            
+            <?php if (!empty($companies)): ?>
+            <div class="table-responsive">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th width="50">לוגו</th>
+                            <th>שם החברה</th>
+                            <th>סוג</th>
+                            <th>איש קשר</th>
+                            <th>משתמשים</th>
+                            <th>אתרים</th>
+                            <th>מנוי</th>
+                            <th>סטטוס</th>
+                            <th width="120">פעולות</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($companies as $company): ?>
+                        <tr>
+                            <td>
+                                <?php if (!empty($company['logo'])): ?>
+                                    <img src="<?php echo htmlspecialchars($company['logo']); ?>" 
+                                         alt="לוגו <?php echo htmlspecialchars($company['name']); ?>" 
+                                         class="company-logo">
+                                <?php else: ?>
+                                    <div class="company-logo-placeholder">
+                                        <i class="fas fa-building"></i>
+                                    </div>
+                                <?php endif; ?>
+                            </td>
+                            
+                            <td>
+                                <div class="company-info">
+                                    <strong><?php echo htmlspecialchars($company['name']); ?></strong>
+                                    <?php if (!empty($company['email'])): ?>
+                                        <br><small class="text-muted">
+                                            <i class="fas fa-envelope"></i>
+                                            <?php echo htmlspecialchars($company['email']); ?>
+                                        </small>
+                                    <?php endif; ?>
+                                </div>
+                            </td>
+                            
+                            <td>
+                                <?php
+                                $typeClass = $company['company_type'] === 'main' ? 'badge-primary' : 'badge-info';
+                                $typeText = $company['company_type'] === 'main' ? 'ראשית' : 'לקוח';
+                                ?>
+                                <span class="badge <?php echo $typeClass; ?>">
+                                    <?php echo $typeText; ?>
+                                </span>
+                            </td>
+                            
+                            <td>
+                                <?php if (!empty($company['contact_person'])): ?>
+                                    <strong><?php echo htmlspecialchars($company['contact_person']); ?></strong>
+                                    <?php if (!empty($company['phone'])): ?>
+                                        <br><small class="text-muted">
+                                            <i class="fas fa-phone"></i>
+                                            <?php echo htmlspecialchars($company['phone']); ?>
+                                        </small>
+                                    <?php endif; ?>
+                                <?php else: ?>
+                                    <span class="text-muted">לא הוגדר</span>
+                                <?php endif; ?>
+                            </td>
+                            
+                            <td>
+                                <span class="usage-indicator">
+                                    <?php echo number_format($company['active_users']); ?>
+                                    <?php if ($company['max_users'] > 0): ?>
+                                        / <?php echo number_format($company['max_users']); ?>
+                                        <?php 
+                                        $userPercentage = ($company['active_users'] / $company['max_users']) * 100;
+                                        if ($userPercentage >= 90): ?>
+                                            <i class="fas fa-exclamation-triangle text-warning" title="קרוב למגבלה"></i>
+                                        <?php elseif ($userPercentage >= 100): ?>
+                                            <i class="fas fa-times-circle text-danger" title="חריגה ממגבלה"></i>
+                                        <?php endif; ?>
+                                    <?php else: ?>
+                                        <span class="text-muted">/ ללא הגבלה</span>
+                                    <?php endif; ?>
+                                </span>
+                            </td>
+                            
+                            <td>
+                                <span class="usage-indicator">
+                                    <?php echo number_format($company['active_sites']); ?>
+                                    <?php if ($company['max_sites'] > 0): ?>
+                                        / <?php echo number_format($company['max_sites']); ?>
+                                        <?php 
+                                        $sitePercentage = ($company['active_sites'] / $company['max_sites']) * 100;
+                                        if ($sitePercentage >= 90): ?>
+                                            <i class="fas fa-exclamation-triangle text-warning" title="קרוב למגבלה"></i>
+                                        <?php elseif ($sitePercentage >= 100): ?>
+                                            <i class="fas fa-times-circle text-danger" title="חריגה ממגבלה"></i>
+                                        <?php endif; ?>
+                                    <?php else: ?>
+                                        <span class="text-muted">/ ללא הגבלה</span>
+                                    <?php endif; ?>
+                                </span>
+                            </td>
+                            
+                            <td>
+                                <div class="subscription-info">
+                                    <?php if (!empty($company['subscription_plan'])): ?>
+                                        <span class="badge badge-outline">
+                                            <?php echo htmlspecialchars($company['subscription_plan']); ?>
+                                        </span>
+                                    <?php endif; ?>
+                                    
+                                    <?php if ($company['subscription_status'] !== 'ללא הגבלה'): ?>
+                                        <br><small class="subscription-status <?php 
+                                            echo $company['subscription_status'] === 'פג תוקף' ? 'text-danger' : 
+                                                ($company['subscription_status'] === 'יפוג בקרוב' ? 'text-warning' : 'text-success'); 
+                                        ?>">
+                                            <?php echo $company['subscription_status']; ?>
+                                            <?php if ($company['days_to_expiry'] !== null && $company['days_to_expiry'] > 0): ?>
+                                                (<?php echo $company['days_to_expiry']; ?> ימים)
+                                            <?php endif; ?>
+                                        </small>
+                                    <?php endif; ?>
+                                </div>
+                            </td>
+                            
+                            <td>
+                                <?php
+                                $statusClass = [
+                                    'active' => 'badge-success',
+                                    'inactive' => 'badge-secondary', 
+                                    'suspended' => 'badge-danger'
+                                ][$company['status']] ?? 'badge-secondary';
+                                
+                                $statusText = [
+                                    'active' => 'פעיל',
+                                    'inactive' => 'לא פעיל',
+                                    'suspended' => 'מושעה'
+                                ][$company['status']] ?? $company['status'];
+                                ?>
+                                <span class="badge <?php echo $statusClass; ?>">
+                                    <?php echo $statusText; ?>
+                                </span>
+                            </td>
+                            
+                            <td>
+                                <div class="action-buttons">
+                                    <a href="view.php?id=<?php echo $company['id']; ?>" 
+                                       class="btn btn-sm btn-outline" title="צפייה">
+                                        <i class="fas fa-eye"></i>
+                                    </a>
+                                    
+                                    <?php if ($userRole === 'super_admin' || 
+                                              ($userRole === 'company_admin' && $company['id'] == $currentUser['company_id'])): ?>
+                                        <a href="edit.php?id=<?php echo $company['id']; ?>" 
+                                           class="btn btn-sm btn-primary" title="עריכה">
+                                            <i class="fas fa-edit"></i>
+                                        </a>
+                                    <?php endif; ?>
+                                    
+                                    <?php if ($userRole === 'super_admin' && $company['company_type'] !== 'main'): ?>
+                                        <button onclick="deleteCompany(<?php echo $company['id']; ?>, '<?php echo htmlspecialchars($company['name'], ENT_QUOTES); ?>')" 
+                                                class="btn btn-sm btn-danger" title="מחיקה">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    <?php endif; ?>
+                                </div>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+            
+            <?php if ($totalPages > 1): ?>
+            <!-- Pagination -->
+            <div class="card-footer">
+                <div class="pagination-wrapper">
+                    <div class="pagination-info">
+                        מציג <?php echo number_format(($page - 1) * $limit + 1); ?> - 
+                        <?php echo number_format(min($page * $limit, $totalCompanies)); ?> 
+                        מתוך <?php echo number_format($totalCompanies); ?> תוצאות
+                    </div>
+                    
+                    <nav class="pagination">
+                        <?php if ($page > 1): ?>
+                            <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page - 1])); ?>" 
+                               class="btn btn-outline btn-sm">
+                                <i class="fas fa-chevron-right"></i>
+                                הקודם
+                            </a>
+                        <?php endif; ?>
+                        
+                        <?php
+                        $start = max(1, $page - 2);
+                        $end = min($totalPages, $page + 2);
+                        
+                        for ($i = $start; $i <= $end; $i++):
+                        ?>
+                            <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $i])); ?>" 
+                               class="btn <?php echo $i === $page ? 'btn-primary' : 'btn-outline'; ?> btn-sm">
+                                <?php echo $i; ?>
+                            </a>
+                        <?php endfor; ?>
+                        
+                        <?php if ($page < $totalPages): ?>
+                            <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page + 1])); ?>" 
+                               class="btn btn-outline btn-sm">
+                                הבא
+                                <i class="fas fa-chevron-left"></i>
+                            </a>
+                        <?php endif; ?>
+                    </nav>
+                </div>
+            </div>
+            <?php endif; ?>
+            
+            <?php else: ?>
+            <!-- Empty State -->
+            <div class="empty-state">
+                <div class="empty-state-icon">
+                    <i class="fas fa-building"></i>
+                </div>
+                <h3>אין חברות להצגה</h3>
+                <p>לא נמצאו חברות התואמות לקריטריונים שהוגדרו.</p>
+                
+                <?php if ($userRole === 'super_admin'): ?>
+                <div class="empty-state-actions">
+                    <a href="add.php" class="btn btn-primary">
+                        <i class="fas fa-plus"></i>
+                        הוסף חברה ראשונה
+                    </a>
+                </div>
+                <?php endif; ?>
+                
+                <?php if (!empty($search) || !empty($status) || !empty($company_type) || !empty($subscription_plan)): ?>
+                <div class="empty-state-actions">
+                    <a href="index.php" class="btn btn-outline">
+                        <i class="fas fa-times"></i>
+                        נקה סינונים
+                    </a>
+                </div>
+                <?php endif; ?>
+            </div>
+            <?php endif; ?>
+        </div>
+        
+    </div>
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div id="deleteModal" class="modal" style="display: none;">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">אישור מחיקת חברה</h5>
+                <button type="button" class="modal-close" onclick="closeDeleteModal()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-warning">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    פעולה זו תמחק את החברה לצמיתות יחד עם כל הנתונים הקשורים אליה.
+                </div>
+                <p>האם אתה בטוח שברצונך למחוק את החברה <strong id="companyNameToDelete"></strong>?</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline" onclick="closeDeleteModal()">ביטול</button>
+                <button type="button" class="btn btn-danger" onclick="confirmDelete()">
+                    <i class="fas fa-trash"></i>
+                    מחק חברה
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let companyToDelete = null;
+
+function deleteCompany(id, name) {
+    companyToDelete = id;
+    document.getElementById('companyNameToDelete').textContent = name;
+    document.getElementById('deleteModal').style.display = 'flex';
+}
+
+function closeDeleteModal() {
+    document.getElementById('deleteModal').style.display = 'none';
+    companyToDelete = null;
+}
+
+function confirmDelete() {
+    if (companyToDelete) {
+        // שליחת בקשת מחיקה
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = 'delete.php';
+        
+        const idInput = document.createElement('input');
+        idInput.type = 'hidden';
+        idInput.name = 'company_id';
+        idInput.value = companyToDelete;
+        
+        form.appendChild(idInput);
+        document.body.appendChild(form);
+        form.submit();
+    }
+}
+
+function exportCompanies() {
+    // יצוא נתונים לאקסל
+    window.location.href = 'export.php?' + new URLSearchParams(window.location.search);
+}
+</script>
+
+<?php require_once '../../includes/footer.php'; ?>
